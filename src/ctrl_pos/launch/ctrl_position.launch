@@ -1,0 +1,9 @@
+<launch>
+
+
+<node name="setpoint_pub" pkg="ctrl_ros" type="pub_setpoints_pos" output="screen">
+
+</node>
+
+
+</launch>

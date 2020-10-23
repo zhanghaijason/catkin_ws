@@ -1,0 +1,10 @@
+<launch>
+
+
+<node name="line_detection" pkg="camera" type="camera_line_detection" output="screen">
+   <param name="line_threshold" value="50"/> 
+</node>
+
+
+</launch>
+
