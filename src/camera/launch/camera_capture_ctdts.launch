@@ -2,26 +2,33 @@
 
 
 <node name="image_capture" pkg="camera" type="camera_node" output="screen" cwd = "node">
-	<param name = "controller_px" value = "1.3"/>
-	<param name = "controller_py" value = "2"/>
-	<param name = "controller_pz" value = "1.8"/>
-	<param name = "controller_pt" value = "5"/>
-	<param name = "controller_dx" value = "4.2"/>
-	<param name = "controller_dy" value = "3.5"/>
-	<param name = "controller_dz" value = "4"/>
-	<param name = "controller_dt" value = "0"/>
-	<param name = "controller_ix" value = "0.3"/>
-	<param name = "controller_iy" value = "0.8"/>
-	<param name = "controller_iz" value = "1.3"/>
+	<param name = "controller_px" value = "2.2"/>
+	<param name = "controller_py" value = "4"/>
+	<param name = "controller_pz" value = "6.8"/>
+
+	<param name = "controller_pt" value = "10"/>
+
+	<param name = "controller_dx" value = "6"/>
+	<param name = "controller_dy" value = "10"/>
+	<param name = "controller_dz" value = "5"/>
+
+	<param name = "controller_dt" value = "11"/>
+
+	<param name = "controller_ix" value = "0"/>
+	<param name = "controller_iy" value = "0.4"/>
+	<param name = "controller_iz" value = "0.2"/>
+
 	<param name = "controller_it" value = "0"/>
+
 	<param name = "verbose_setting" value = "true"/>
-	<param name = "line_threshold" value = "45"/>
+	<param name = "line_threshold" value = "50"/>
 	<param name = "control_mode" value = "0"/>
 	<param name = "sigma_a" value = "0.2" />
 	<param name = "sigma_z" value = "2" />
 	<param name = "nCount" value = "4500"/>
 	<param name = "Vz" value = "0.2" />
 	<param name = "zlimit" value = "0."/>
+	<param name = "tau_control" value = "1"/>
 </node>
 
 </launch>

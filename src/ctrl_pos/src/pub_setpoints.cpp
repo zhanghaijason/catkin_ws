@@ -41,9 +41,9 @@ int main(int argc, char **argv)
        msg.header.stamp = ros::Time::now();
        msg.header.seq=count;
        msg.header.frame_id = 1;
-       msg.pose.position.x = 0;//0.001*some_object.position_x;
+       msg.pose.position.x = 3.7;//0.001*some_object.position_x;
        msg.pose.position.y = 0.0;//0.001*some_object.position_y;
-       msg.pose.position.z = 0.7;//0.001*some_object.position_z;
+       msg.pose.position.z = -0.9;//0.001*some_object.position_z;
        msg.pose.orientation.x = 0;
        msg.pose.orientation.y = 0;
        msg.pose.orientation.z = 0;

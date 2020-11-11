@@ -1,6 +1,7 @@
 #include <ctime>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <fstream>
 #include <iomanip>
 #include <raspicam/raspicam_cv.h>
@@ -41,7 +42,7 @@ mavros_msgs::State current_state;
 mavros_msgs::AttitudeTarget att_msg;
 
 double a_zf = 0.0;
-double v_zf = 0.0, v_xf =0, v_yf = 0;
+double v_zf = 0.0, v_xf =0.0, v_yf = 0.0;
 //Eigen::Vector3d mavPos_;
 //geometry_msgs::Quaternion ori;
 double roll_fb, pitch_fb, yaw_fb;
@@ -158,9 +159,9 @@ int main ( int argc,char **argv ) {
 //	ros::Subscriber acce_sub = n_image.subscribe("mavros/local_position/accel", 1, &mavaccelCallback, ros::TransportHints().tcpNoDelay());
 
 //	ros::Subscriber distance_sub = n_image.subscribe("mavros/distance_sensor/hrlv_ez4_pub", 1, &distance_sensorCallback, ros::TransportHints().tcpNoDelay());
-	ros::Publisher att_pub = n_image.advertise<mavros_msgs::AttitudeTarget>("mavros/setpoint_raw/attitude", 1);
-	ros::Publisher vel_pub = n_image.advertise<geometry_msgs::Twist>("mavros/setpoint_velocity/cmd_vel_unstamped", 1);
-	ros::Publisher pos_pub = n_image.advertise<geometry_msgs::PoseStamped>("mavros/setpoint_position/local", 1);
+	ros::Publisher att_pub = n_image.advertise<mavros_msgs::AttitudeTarget>("mavros/setpoint_raw/attitude", 5);
+	ros::Publisher vel_pub = n_image.advertise<geometry_msgs::Twist>("mavros/setpoint_velocity/cmd_vel_unstamped", 2);
+	ros::Publisher pos_pub = n_image.advertise<geometry_msgs::PoseStamped>("mavros/setpoint_position/local", 2);
 	ros::Rate loop_rate(100);
 	int width = 192;
 	int height = 144;
@@ -175,8 +176,10 @@ int main ( int argc,char **argv ) {
 	double set_speed = 0.1;
 	double z_limit = 0;
 	double tau0 = 0, tau_ref = 0, C= 0.5, tauS = -0.5, tau =0, tS=0;
+	bool switched = false; //the sign to see whether the condition to switch to second stage is met or not
 	double xInitial = 2.8, yInitial = 0.00, zInitial = -0.9;
-
+        geometry_msgs::Twist velmsg;    
+   
 	vector<int> compression_params;
 	compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 	compression_params.push_back(100);
@@ -208,9 +211,11 @@ int main ( int argc,char **argv ) {
 	//Start capture
 	cout<<"Capturing "<<nCount<<" frames ...."<<endl;
 	ros::Time time_begin = ros::Time::now();
-	ros::Time time_takeoff, time_perch, time_move, time_yawEstimate, time_ctdts, time_ipts, cur_time;
+	ros::Time time_takeoff, time_perch, time_move, time_yawEstimate, time_ctdts, time_ipts, cur_time, time_switchtau, time_final;
 	time_takeoff = time_begin;
 	double Kp_x, Kp_y, Kp_z, Kd_x, Kd_y, Kd_z, Ki_x, Ki_y, Ki_z, Kp_t, Kd_t, Ki_t;
+	int tau_control = 1;
+	double k0 = -0.4848, k1 = -0.24, k2 = -0.8824, k3 = 0.3106; 
 	bool verbose;
 	double yaw_image = 0.0;
 	double xGoal = 3.3, yGoal = 0, zGoal = -0.9;
@@ -234,6 +239,7 @@ int main ( int argc,char **argv ) {
 	n_imagePrivate.getParam("nCount", nCount);
 	n_imagePrivate.getParam("Vz", set_speed);
 	n_imagePrivate.getParam("zlimit", z_limit);
+	n_imagePrivate.getParam("tau_control", tau_control);
 	//n_imagePrivate.getParam("ygoal", yInitial);
 	// construct all the needed PID controllers
 	PID controller_x(Kp_x, Kd_x,Ki_x, -100, 100, -100, 100, "x_controller");
@@ -245,6 +251,7 @@ int main ( int argc,char **argv ) {
 	ofstream imageLog;
 	ofstream ttcLog;
 	ofstream safeLog;
+	ofstream switchLog;
 	ControlLog.open("/home/ubuntu/Desktop/control_log.txt");
 	fbLog.open("/home/ubuntu/Desktop/fb_log.txt");
 	imageLog.open("/home/ubuntu/Desktop/angle_log.txt");
@@ -255,7 +262,7 @@ int main ( int argc,char **argv ) {
 	x_hat <<0;
 	double u_x = 0.0, u_y = 0.0, u_z = 0.0, d_yaw = 0;
 	for(int wait = 0; wait < 100; wait++){
-		cout << "Waiting for yaw feedback" << endl;
+		cout << "Waiting for Initial yaw feedback" << endl;
 		ros::spinOnce();
 		loop_rate.sleep();
 	}
@@ -271,7 +278,7 @@ int main ( int argc,char **argv ) {
 		
 		// DO the line detection and error calculation
 		Vec4i l_line, r_line;
-		if( controlMode == Move2Start || controlMode == yawEstimate){// the yaw estimation is only conducted in the fist three stages
+		if(controlMode == yawEstimate){// the yaw estimation is only conducted in the fist three stages
 			LineDetection2(image, threshold, l_line, r_line, 5, verbose);
 			position = PositionFb2(l_line, r_line, width, height, 10, verbose);
 		}
@@ -288,13 +295,14 @@ int main ( int argc,char **argv ) {
 
 		switch(controlMode){
 			case takeoff:
-				if ((ros::Time::now()-time_takeoff).toSec() >= 2 && abs(x_fb-xGoal)<=0.1 && abs(y_fb-yGoal) <=0.1 && abs(z_fb-zGoal) <= 0.1){
+				if ((ros::Time::now()-time_takeoff).toSec() >= 4 && abs(x_fb-xGoal)<=0.1 && abs(y_fb-yGoal) <=0.1 && abs(z_fb-zGoal) <= 0.1){
 					controlMode = Move2Start;
 					time_move = ros::Time::now();
 					switch1i = i;
-				}
+				}  
 				cout << "This is control mode " << controlMode << endl;
 				break;
+			
 			case Move2Start:
 				xGoal = xInitial;
 				yGoal = yInitial;
@@ -307,7 +315,7 @@ int main ( int argc,char **argv ) {
                                 cout << "This is control mode " << controlMode << endl;
                                 cout <<"Desired yaw: " << d_yaw << endl;
                                 break;
-
+			
 			case yawEstimate:
                                 xGoal = xInitial;
                                 yGoal = yInitial;
@@ -336,10 +344,15 @@ int main ( int argc,char **argv ) {
                                 break;
 
 			case perchPrepare:
-//				zGoal = -0.4;
-				if(z_fb>=-0.8 && z_fb<=-0.7 && v_zf <= 1.15 && v_zf >= 0.9){
-					controlMode = perchDisCTDTS;
-					time_ctdts = ros::Time::now();
+				if(z_fb>=-0.6 && z_fb<=-0.55 && v_zf <= 0.9 && v_zf >= 0.65){
+					if(tau_control == 1) {
+						controlMode = perchDisCTDTS;
+						time_ctdts = ros::Time::now();
+					}
+					else {
+						controlMode = perchDisIPTS;
+						time_ipts = ros::Time::now();
+					}
 					switch4i = i;
 				}
 				if(v_zf!=0)
@@ -348,13 +361,16 @@ int main ( int argc,char **argv ) {
 				if(z_fb >= z_limit)
 					controlMode = failSafe;
 				break;
-
+			
 			case perchDisCTDTS:
-				C = 0.347;
+				C = 0.4053;
 				cur_time = ros::Time::now();
-				if(tau <= tauS){
+				if(tau>=tauS)
+					switched = true;
+				if(!switched){
 					tau_ref = C*(cur_time-time_ctdts).toSec()+tau0;
 					tS = (cur_time-time_ctdts).toSec();
+					time_switchtau = ros::Time::now();
 					switchtaui = i;
 				}
 				else{
@@ -363,69 +379,93 @@ int main ( int argc,char **argv ) {
 						tau_ref =-0.02;
 				}
 				z_limit = 0.98;
-				if(z_fb >= z_limit){
+				if(z_fb >= z_limit || v_zf >= 1.6){
 					controlMode = failSafe;
-					z_limit = 0.9;
 					switch5i = i;
+					time_final = ros::Time::now();
 				}
 				break;		
-			
-			case failSafe:
-				zGoal = z_limit;
-				break;
-		}
-	//	if(!current_state.armed)  //move back to the gound and disarmed
-	//		break;	
-	
-//		cout << "Current mode" << current_state.mode << endl;
-		if(v_zf!=0)
-			tau = (1-z_fb)/(-v_zf);
-		u_x = controller_x.update(x_fb, xGoal);
-                u_y = controller_y.update(y_fb, yGoal);  
-		if(controlMode == perchDisCTDTS || controlMode == perchDisIPTS)
-			u_z = controller_ttc.update(tau_ref/(-(1-z_fb)/v_zf), 1);
-		else
-			u_z = controller_z.update(z_fb, zGoal);
 
-		vector<float> RPY_desired = control_mapping(u_x, u_y, u_z, d_yaw);
-		double cur_tick = (ros::Time::now()-time_begin).toSec();
+			case perchDisIPTS:
+				cur_time = ros::Time::now();
+ 				
+				if(tau >= tauS)
+					switched = true;
+				if(!switched) {
+					double tt = (cur_time-time_ipts).toSec();
+					tau_ref = 1/(k0+k1*tt+k2*tt*tt+k3*tt*tt*tt);
+					tS = (cur_time-time_ipts).toSec();
+					time_switchtau = ros::Time::now();
+                                        switchtaui = i;
+				}
+				/*
+				doubele tt = (cur_time-time_ipts).toSec();
+				if (tt <= 1.4310) {
+					tau_ref = 1/(k0+k1*tt+k2*tt*tt+k3*tt*tt*tt);
+                                        time_switchtau = ros::Time::now();
+                                        switchtaui = i;	
+				}*/
+				else{
+                                        tau_ref = tauS+(cur_time-time_ipts).toSec()-tS;
+                                        if(tau_ref > 0)
+                                                tau_ref =-0.02;
+                                }
+				z_limit = 0.98;
+				if(z_fb >= z_limit || v_zf >= 1.5){
+                                        controlMode = failSafe;
+                                        switch5i = i;
+                                        time_final = ros::Time::now();
+                                }
+                                break; 
+
+			case failSafe:
+				cout<<"FailSafe with z_limit = "<<z_limit<<endl;
+				double cur_tick = (ros::Time::now()-time_begin).toSec();
+                        	safeLog <<cur_tick << ","<< x_fb << "," << y_fb << "," << z_fb<<"," << v_zf <<"," << a_zf <<","<< i << endl;
+                        	velmsg.linear.x = 0;
+                        	velmsg.linear.y = 0;
+                        	velmsg.linear.z = -0.05;
+                        	velmsg.angular.x = 0;
+                        	velmsg.angular.y = 0;
+                        	velmsg.angular.z = 0;
+                        	vel_pub.publish(velmsg);
+				break;
+		
+		}
 		if(controlMode != failSafe){
+			if(v_zf!=0){
+				tau = (1-z_fb)/(-v_zf);
+			}
+			u_x = controller_x.update(x_fb, xGoal);
+                	u_y = controller_y.update(y_fb, yGoal);  
+			if(controlMode == perchDisCTDTS || controlMode == perchDisIPTS)
+				u_z = controller_ttc.update(tau_ref/tau, 1);
+			else
+				u_z = controller_z.update(z_fb, zGoal);
+
+			vector<float> RPY_desired = control_mapping(u_x, u_y, u_z, d_yaw);
+			double cur_tick = (ros::Time::now()-time_begin).toSec();
 			fbLog <<cur_tick << ","<< x_fb << "," << y_fb << "," << z_fb<<"," << v_zf <<"," << a_zf <<","<< i << endl;
 			ControlLog << cur_tick << ","<< RPY_desired[1] << "," << RPY_desired[2] << "," << RPY_desired[3]<<"," << RPY_desired[0] << endl;
 			imageLog << cur_tick << "," << position[0] << ", " << position[1]<< ", " << kal_yaw <<"," << dt << endl;
+			if((controlMode == perchDisCTDTS || controlMode == perchDisIPTS)&&i>=switch4i+1)
+                        	ttcLog<<cur_tick<<","<<tau_ref<<","<<tau<<","<<i<<endl;
+			if(controlMode == perchPrepare){
+        	                //RPY_desired[0] = 0.8; //in the prepare stage, use full thrust to accelerate
+				velmsg.linear.x = 0;
+                                velmsg.linear.y = 0;
+                                velmsg.linear.z = 0.8;
+                                velmsg.angular.x = 0;
+                                velmsg.angular.y = 0;
+                                velmsg.angular.z = 0;
+                                vel_pub.publish(velmsg);
+	                }
+			else {
+				Desired2Quater(att_msg, RPY_desired);
+				att_pub.publish(att_msg);
+			}
 		}
-		else{
-			safeLog <<cur_tick << ","<< x_fb << "," << y_fb << "," << z_fb<<"," << v_zf <<"," << a_zf <<","<< i << endl;
-		}
-		if((controlMode == perchDisCTDTS || controlMode == perchDisIPTS)&&i>=switch4i+1)
-			ttcLog<<cur_tick<<","<<tau_ref<<","<<(1-z_fb)/(-v_zf)<<","<<i<<endl; 
-		/*
-		if(verbose){
-			cout <<"The desired control RPY are: " << RPY_desired[1] <<", " << RPY_desired[2] <<", " << RPY_desired[3]<<", The thrust is: " << RPY_desired[0] <<endl; 
-		}*/
-		
-		if(controlMode == perchPrepare){
-			RPY_desired[0] = 0.8; //in the prepare stage, use full thrust to accelerate
-		}
-		if(controlMode == failSafe){
-			cout<<"FailSafe with z_limit = "<<z_limit<<endl;
-			
-		}
-		Desired2Quater(att_msg, RPY_desired);
-		if(controlMode != failSafe)
-			att_pub.publish(att_msg);
 
-		else{
-			geometry_msgs::Twist msg;
-			msg.linear.x = 0;
-			msg.linear.y = 0;
-			msg.linear.z = -0.05;
-			msg.angular.x = 0;
-			msg.angular.y = 0;
-			msg.angular.z = 0;
-			//msg.pose.orientation.w = 0;
-			vel_pub.publish(msg);
-		}
 		ros::spinOnce();
 		if(i >= 1000 && v_xf==0 && v_yf==0 )
 			break;
@@ -450,11 +490,25 @@ int main ( int argc,char **argv ) {
 	}
 	Camera.release();
 	cout<<"Image saved in "<< folderName<<endl;
-	cout<<"Switch 1 i: " <<switch1i << ", " << "Switch time: "<< (time_move-time_begin).toSec()<<endl;
-	cout<<"Switch 2 i: " <<switch2i << ", " << "Switch time: "<< (time_yawEstimate-time_begin).toSec()<<endl;
-	cout<<"Switch 3 i: " <<switch3i << ", " << "Switch time: "<< (time_perch-time_begin).toSec()<<endl;
-	cout<<"Switch 4 i: " <<switch4i << ", " << "Switch time: "<< (time_ctdts-time_begin).toSec()<<endl;
-	cout<<"Switch 5 i: " <<switch5i <<endl;
-	cout<<"Switch tau i: " <<switchtaui <<endl;
+	cout<<"Switch move i: " <<switch1i << ", " << "Switch time: "<<     (time_move-time_begin).toSec()<<endl;
+	cout<<"Switch yawestimate i: " <<switch2i << ", " << "Switch time: "<<     (time_yawEstimate-time_begin).toSec()<<endl;
+	cout<<"Switch perchPrepare i: " <<switch3i << ", " << "Switch time: "<<     (time_perch-time_begin).toSec()<<endl;
+	if (tau_control == 1)
+		cout<<"Switch perchfirst i: " <<switch4i << ", " << "Switch time: "<<     (time_ctdts-time_begin).toSec()<<endl;
+	else
+		cout<<"Switch perchfirst i: " <<switch4i << ", " << "Switch time: "<<     (time_ipts-time_begin).toSec()<<endl;
+	cout<<"Switch perchSecond i: " <<switchtaui << ", " << "Switch time: "<< (time_switchtau-time_begin).toSec()<<endl;
+	cout<<"Switch final protection i: " <<switch5i << ", " << "Switch time: "<< (time_final-time_begin).toSec()<<endl;
+	switchLog.open("/home/ubuntu/Desktop/switch.txt");
+	switchLog << switch1i << "," << (time_move-time_begin).toSec() << endl;
+	switchLog << switch2i << "," << (time_yawEstimate-time_begin).toSec() << endl;
+	switchLog << switch3i << "," << (time_perch-time_begin).toSec() << endl;
+	if (tau_control == 1)
+		switchLog << switch4i << "," << (time_ctdts-time_begin).toSec() << endl;
+	else
+		switchLog << switch4i << "," << (time_ipts-time_begin).toSec() << endl;
+	switchLog << switchtaui << "," << (time_switchtau-time_begin).toSec() << endl;
+	switchLog << switch5i << "," << (time_final-time_begin).toSec() << endl;
+	switchLog.close();
 	return 0;
 }

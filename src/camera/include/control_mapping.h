@@ -15,7 +15,7 @@ vector<float> control_mapping(float u_x, float u_y, float u_z, float target_psi 
     	//float phi=target_phi*180/3.14159;
     	//float theta=target_theta*180/3.14159;
 	vector<float> res(4,0);
-	res[0] = std::max(0.0, std::min(1.0, u/g*0.5+0.05)); //since the quad is too heavy, make the default hovering thrust as 0.6
+	res[0] = std::max(0.0, std::min(1.0, u/g*0.5)); //since the quad is too heavy, make the default hovering thrust as 0.6
 	res[1] = std::max(float(-30.0/180*3.14159), std::min(float(30.0/180*3.14159), target_phi));
 	res[2] = std::max(float(-30.0/180*3.14159), std::min(float(30.0/180*3.14159), target_theta));
 	res[3] = target_psi;
